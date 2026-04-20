@@ -1,0 +1,2 @@
+# Current script uses the Python standard library only.
+# Add third-party dependencies here if you later extend the project.
