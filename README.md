@@ -1,4 +1,3 @@
-````md
 # Windows IR Lab
 
 A Windows-focused incident response and detection lab for home enthusiasts, students, and aspiring SOC / DFIR analysts.
@@ -50,6 +49,12 @@ Then it generates:
 - Persistence inventory checks
 - Case workflow summary and evidence guidance
 
+## Sample Outputs
+
+- [Live sample outputs page](https://maunton.github.io/windows-ir-lab/)
+- [Sample analyst report](https://maunton.github.io/windows-ir-lab/sample_analyst_report.html)
+- [Sample stakeholder summary](https://maunton.github.io/windows-ir-lab/sample_stakeholder_summary.html)
+
 ## Project status
 
 This project is in the **validation and tuning** phase.
@@ -76,7 +81,10 @@ windows-ir-lab/
 │   ├── GITHUB_PREVIEW.md
 │   ├── HOME_LAB_SETUP.md
 │   ├── PROJECT_ROADMAP.md
-│   └── TESTING_MATRIX.md
+│   ├── TESTING_MATRIX.md
+│   ├── index.html
+│   ├── sample_analyst_report.html
+│   └── sample_stakeholder_summary.html
 ├── examples/
 │   └── README.md
 ├── scripts/
@@ -131,6 +139,24 @@ Based on tuning so far:
 * **3 days** = strong balance between context and noise
 * **7 days** = usable for broader hunting, but capped logs can skew the report toward recent activity
 
+## Detection coverage
+
+Current detection logic includes coverage for:
+
+* PowerShell to Command Shell
+* PowerShell Web Request
+* ATT&CK-tagged execution and transfer behaviors
+* persistence-related checks
+* browser / Bitdefender helper false-positive tuning
+* process access triage for likely benign vs higher-risk behavior
+
+## Known limitations
+
+* Best results are usually in **1–3 day** review windows
+* Longer windows can skew toward recent high-volume logs when event caps are reached
+* Designed for **Windows-native execution**
+* Not a replacement for enterprise SIEM or EDR tooling
+
 ## Who this is for
 
 * home-lab security enthusiasts
@@ -152,6 +178,3 @@ This repo is strong for employers because it shows:
 * This project is Windows-specific.
 * Python dependencies are currently standard-library only.
 * The script should be run in a controlled home-lab or personal test environment.
-
-```
-```
