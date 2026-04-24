@@ -115,49 +115,35 @@ Review, Triage, and Documentation
 - [Sample Analyst Report](https://maunton.github.io/windows-ir-lab/sample_analyst_report.html)
 - [Sample Stakeholder Summary](https://maunton.github.io/windows-ir-lab/sample_stakeholder_summary.html)
 
-## Screenshots / Visual Walkthrough
+## Detection Example
 
-> Add these screenshots to an `images/` folder after capturing them from your repo, reports, and lab outputs.
+Below is an example of the type of analysis this tool produces during a lab run:
 
-### 1. Project File Structure
+- PowerShell execution detected with command-line arguments.
+- Web request activity observed via PowerShell.
+- Persistence indicators identified through Run key analysis.
+- Scheduled task creation detected.
 
-![Project Files](images/01-project-files.png)
+Each detection is:
+- Assigned a severity level
+- Tagged with a MITRE ATT&CK technique
+- Included in both analyst and stakeholder reports
 
-### 2. Reporter Script Overview
+This demonstrates how raw telemetry is transformed into actionable findings that support incident response workflows.
 
-![Reporter Script Overview](images/02-reporter-script-overview.png)
+## Example Analyst Finding
 
-### 3. Sysmon Balanced Configuration
+**Detection:** Suspicious PowerShell Execution  
+**Severity:** Medium  
+**ATT&CK Technique:** T1059.001 (PowerShell)
 
-![Sysmon Configuration](images/03-sysmon-balanced-config.png)
+**Summary:**
+PowerShell was executed with command-line arguments indicating potential script execution. This behavior may indicate administrative activity or early-stage execution techniques used by attackers.
 
-### 4. Quick Start Command
-
-![Quick Start Command](images/04-run-reporter-command.png)
-
-### 5. Analyst Report Output
-
-![Analyst Report Output](images/05-analyst-report-output.png)
-
-### 6. Stakeholder Summary Output
-
-![Stakeholder Summary Output](images/06-stakeholder-summary-output.png)
-
-### 7. ATT&CK Tagged Detection View
-
-![ATTACK Detection View](images/07-attack-detection-view.png)
-
-### 8. Detection Severity / Triage Actions
-
-![Detection Severity](images/08-detection-severity-triage.png)
-
-### 9. Evidence and JSON Output
-
-![Evidence JSON Output](images/09-json-evidence-output.png)
-
-### 10. GitHub Pages Preview
-
-![GitHub Pages Preview](images/10-github-pages-preview.png)
+**Recommended Action:**
+- Review command-line arguments
+- Validate user context
+- Correlate with network activity
 
 ## Quick Start
 
