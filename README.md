@@ -1,74 +1,58 @@
 # Windows IR Lab
 
-A Windows-focused incident response and detection lab for home enthusiasts, students, and aspiring SOC / DFIR analysts.
+![Python](https://img.shields.io/badge/Python-3.x-blue)
+![Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey)
+![Sysmon](https://img.shields.io/badge/Telemetry-Sysmon-red)
+![PowerShell](https://img.shields.io/badge/PowerShell-Logging-blue)
+![MITRE ATT&CK](https://img.shields.io/badge/MITRE-ATT%26CK-red)
+![DFIR](https://img.shields.io/badge/Focus-DFIR%20%2F%20SOC-green)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
-This project collects Windows Security, PowerShell, Sysmon, and endpoint context, then turns that data into:
+## Overview
 
-- a full **analyst report**
-- a concise **stakeholder summary**
-- an **ATT&CK-tagged detection view**
-- a clean, portable **HTML report package**
+**Windows IR Lab** is a Windows-focused incident response and detection engineering project built for home-lab testing, SOC practice, and DFIR portfolio development.
 
-It is designed for people who want to practice Windows telemetry analysis on a personal lab machine without needing a full enterprise SIEM.
+The project collects Windows Security, PowerShell, Sysmon, browser, and host context data, then turns that telemetry into structured analyst reports, stakeholder summaries, ATT&CK-tagged detection views, and portable HTML output.
 
-## Why this project matters
+This project is designed to show practical incident response skills without requiring a full enterprise SIEM.
 
-This repo demonstrates practical experience in:
+## Why This Project Matters
 
-- Windows event log collection and triage
-- PowerShell and Sysmon telemetry analysis
-- detection engineering and false-positive tuning
-- ATT&CK mapping for analyst-facing detections
-- report generation for technical and non-technical audiences
-- home-lab focused security engineering
+Modern SOC and DFIR work is not just about collecting logs. Analysts need to understand what telemetry matters, reduce false positives, map suspicious activity to ATT&CK techniques, and communicate findings clearly.
 
-## What it does
+This project demonstrates the ability to:
 
-The reporter collects and correlates:
+- Collect and normalize Windows endpoint telemetry.
+- Analyze PowerShell, Security, and Sysmon events.
+- Tune noisy detections and reduce false positives.
+- Map suspicious behavior to MITRE ATT&CK.
+- Generate reports for both technical analysts and non-technical stakeholders.
+- Build a repeatable home-lab workflow for detection validation.
 
-- **Windows Security logs** (process creation and related events)
-- **PowerShell logs** (including script block logging)
-- **Sysmon logs** (process, file, registry, DNS, network, and extended telemetry)
-- **host context** like OS version, AV status, persistence inventory, and service state
+## Project Objectives
 
-Then it generates:
+- Build a Windows-native incident response reporting tool.
+- Collect security-relevant endpoint telemetry.
+- Generate analyst-friendly and stakeholder-friendly reports.
+- Support safe home-lab validation commands.
+- Demonstrate detection logic, triage workflow, and ATT&CK mapping.
+- Present the project clearly for cybersecurity employers and recruiters.
 
-- `windows_ir_analyst_report.html`
-- `windows_ir_analyst_report.md`
-- `windows_ir_stakeholder_summary.html`
-- raw JSON output for follow-on triage
+## Tools and Technologies
 
-## Current features
+| Tool / Component | Purpose |
+|---|---|
+| Python | Core reporting tool |
+| PowerShell | Windows event collection and validation |
+| Windows Event Logs | Security and PowerShell telemetry |
+| Sysmon | Extended endpoint telemetry |
+| MITRE ATT&CK | Detection mapping and analyst context |
+| HTML / Markdown | Portable report output |
+| GitHub Pages | Hosted sample output |
+| GitHub Actions | Python syntax validation |
+| MIT License | Open-source project licensing |
 
-- Full analyst and stakeholder report split
-- HTML reports with navigation, filters, and print/export styling
-- Named detections with severity and triage actions
-- ATT&CK technique tagging for analyst detections
-- Browser / Bitdefender false-positive tuning
-- PowerShell / Sysmon noise suppression
-- Persistence inventory checks
-- Case workflow summary and evidence guidance
-
-## Sample Outputs
-
-- [Live sample outputs page](https://maunton.github.io/windows-ir-lab/)
-- [Sample analyst report](https://maunton.github.io/windows-ir-lab/sample_analyst_report.html)
-- [Sample stakeholder summary](https://maunton.github.io/windows-ir-lab/sample_stakeholder_summary.html)
-
-## Project status
-
-This project is in the **validation and tuning** phase.
-
-It is stable enough for:
-
-- home-lab testing
-- detection demonstrations
-- GitHub portfolio presentation
-- explaining detection logic to employers
-
-It is not positioned as a replacement for enterprise IR tooling.
-
-## Repo layout
+## Repository Structure
 
 ```text
 windows-ir-lab/
@@ -85,96 +69,235 @@ windows-ir-lab/
 │   ├── index.html
 │   ├── sample_analyst_report.html
 │   └── sample_stakeholder_summary.html
-├── examples/
-│   └── README.md
 ├── scripts/
 │   └── windows_ir_reporter.py
 ├── .gitignore
-├── requirements.txt
-└── README.md
-````
+├── LICENSE
+├── README.md
+└── requirements.txt
+```
 
-## Quick start
+## Detection and Reporting Workflow
 
-### 1. Enable Windows logging
+```text
+Windows Endpoint
+      ↓
+Security Logs / PowerShell Logs / Sysmon Logs / Host Context
+      ↓
+Python IR Reporter
+      ↓
+Detection Logic + Noise Reduction + ATT&CK Mapping
+      ↓
+Analyst Report + Stakeholder Summary + JSON Evidence
+      ↓
+Review, Triage, and Documentation
+```
 
-Recommended:
+## Current Capabilities
 
-* Security process creation auditing
-* PowerShell script block logging
-* Sysmon with the sample config in `config/sysmon-balanced.xml`
+- Windows Security log collection and triage.
+- PowerShell telemetry review.
+- Sysmon event analysis.
+- Host context collection.
+- Persistence inventory checks.
+- Browser and endpoint noise tuning.
+- Named detections with severity.
+- ATT&CK-tagged analyst findings.
+- Analyst report generation.
+- Stakeholder summary generation.
+- HTML and Markdown report output.
+- Raw JSON output for follow-on analysis.
+- Safe validation commands for controlled home-lab testing.
 
-### 2. Run the reporter
+## Sample Outputs
 
-From PowerShell:
+- [Live Sample Outputs Page](https://maunton.github.io/windows-ir-lab/)
+- [Sample Analyst Report](https://maunton.github.io/windows-ir-lab/sample_analyst_report.html)
+- [Sample Stakeholder Summary](https://maunton.github.io/windows-ir-lab/sample_stakeholder_summary.html)
+
+## Screenshots / Visual Walkthrough
+
+> Add these screenshots to an `images/` folder after capturing them from your repo, reports, and lab outputs.
+
+### 1. Project File Structure
+
+![Project Files](images/01-project-files.png)
+
+### 2. Reporter Script Overview
+
+![Reporter Script Overview](images/02-reporter-script-overview.png)
+
+### 3. Sysmon Balanced Configuration
+
+![Sysmon Configuration](images/03-sysmon-balanced-config.png)
+
+### 4. Quick Start Command
+
+![Quick Start Command](images/04-run-reporter-command.png)
+
+### 5. Analyst Report Output
+
+![Analyst Report Output](images/05-analyst-report-output.png)
+
+### 6. Stakeholder Summary Output
+
+![Stakeholder Summary Output](images/06-stakeholder-summary-output.png)
+
+### 7. ATT&CK Tagged Detection View
+
+![ATTACK Detection View](images/07-attack-detection-view.png)
+
+### 8. Detection Severity / Triage Actions
+
+![Detection Severity](images/08-detection-severity-triage.png)
+
+### 9. Evidence and JSON Output
+
+![Evidence JSON Output](images/09-json-evidence-output.png)
+
+### 10. GitHub Pages Preview
+
+![GitHub Pages Preview](images/10-github-pages-preview.png)
+
+## Quick Start
+
+### 1. Clone the Repository
+
+```powershell
+git clone https://github.com/Maunton/Windows-IR-Lab.git
+cd Windows-IR-Lab
+```
+
+### 2. Review Logging Requirements
+
+Recommended Windows logging setup:
+
+- Enable Security process creation auditing.
+- Enable command-line process auditing.
+- Enable PowerShell script block logging.
+- Install Sysmon with the provided balanced configuration.
+
+Sysmon config path:
+
+```text
+config/sysmon-balanced.xml
+```
+
+### 3. Run the Reporter
 
 ```powershell
 python .\scripts\windows_ir_reporter.py --days 2 --max-events 800 --outdir .\reports
 ```
 
-### 3. Review outputs
+### 4. Review Report Output
 
-Open:
+Open the generated report files:
 
-* `windows_ir_analyst_report.html`
-* `windows_ir_stakeholder_summary.html`
+```text
+reports/windows_ir_analyst_report.html
+reports/windows_ir_analyst_report.md
+reports/windows_ir_stakeholder_summary.html
+```
 
-## Suggested test commands
+## Safe Home-Lab Validation Commands
 
-These are safe home-lab validation actions that help exercise the reporter:
+These commands are intended for controlled testing on your own Windows lab machine.
 
 ```powershell
 notepad.exe
+
 Start-Process cmd.exe -ArgumentList '/c echo test-from-cmd > "$env:USERPROFILE\Desktop\ir_test_cmd.txt"'
+
 Invoke-WebRequest -Uri "https://example.com" -OutFile "$env:USERPROFILE\Desktop\example_test.html"
+
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v IRTestRun /t REG_SZ /d "notepad.exe" /f
+
 schtasks /create /sc once /tn IRTestTask /tr "notepad.exe" /st 23:59 /f
 ```
 
-## Best operating ranges
-
-Based on tuning so far:
-
-* **1–2 days** = best for clean incident storytelling
-* **3 days** = strong balance between context and noise
-* **7 days** = usable for broader hunting, but capped logs can skew the report toward recent activity
-
-## Detection coverage
+## Detection Coverage
 
 Current detection logic includes coverage for:
 
-* PowerShell to Command Shell
-* PowerShell Web Request
-* ATT&CK-tagged execution and transfer behaviors
-* persistence-related checks
-* browser / Bitdefender helper false-positive tuning
-* process access triage for likely benign vs higher-risk behavior
+| Area | Example Coverage |
+|---|---|
+| Execution | PowerShell and command shell activity |
+| Ingress Tool Transfer | PowerShell web request activity |
+| Persistence | Run key and scheduled task style checks |
+| Endpoint Context | OS, AV status, service state, and host context |
+| Sysmon Telemetry | Process, file, registry, DNS, and network activity |
+| False Positive Tuning | Browser, Bitdefender, and known helper process noise reduction |
+| ATT&CK Mapping | Technique tagging for analyst-facing detections |
 
-## Known limitations
+## Best Operating Ranges
 
-* Best results are usually in **1–3 day** review windows
-* Longer windows can skew toward recent high-volume logs when event caps are reached
-* Designed for **Windows-native execution**
-* Not a replacement for enterprise SIEM or EDR tooling
+| Time Window | Recommended Use |
+|---|---|
+| 1–2 days | Best for clean incident storytelling |
+| 3 days | Strong balance between context and noise |
+| 7 days | Useful for broader hunting, but event caps may skew toward recent activity |
 
-## Who this is for
+## What Employers Should Notice
 
-* home-lab security enthusiasts
-* SOC / DFIR learners
-* junior detection engineers
-* candidates building a practical cybersecurity GitHub portfolio
+This project demonstrates practical cybersecurity skills that map directly to SOC, DFIR, detection engineering, and security analyst work.
 
-## Portfolio value
+Key strengths shown:
 
-This repo is strong for employers because it shows:
+- Built a working Windows incident response reporting tool.
+- Used Python to automate endpoint telemetry collection and reporting.
+- Incorporated Windows Security, PowerShell, and Sysmon log sources.
+- Tuned detections to reduce false positives and analyst noise.
+- Mapped detections to MITRE ATT&CK.
+- Created both analyst-level and stakeholder-level reports.
+- Built a repeatable home-lab validation process.
+- Documented the project clearly for technical review.
+- Demonstrated the ability to communicate findings to different audiences.
+- Created a portfolio-ready project that shows real defensive security workflow.
 
-* you can build and iterate on a working security tool
-* you understand telemetry, false positives, and analyst workflow
-* you can present technical output clearly to different audiences
-* you can connect detections to ATT&CK rather than only raw logs
+## Portfolio Value
 
-## Notes
+This repo is especially strong for cybersecurity job applications because it shows more than tool usage.
 
-* This project is Windows-specific.
-* Python dependencies are currently standard-library only.
-* The script should be run in a controlled home-lab or personal test environment.
+It shows that you can:
+
+- Build security tooling.
+- Understand Windows telemetry.
+- Think like a SOC analyst.
+- Reduce noise and improve signal.
+- Document evidence.
+- Create reporting that supports decision-making.
+- Explain technical work in a professional format.
+
+## Lessons Learned
+
+- High-quality telemetry depends on proper Windows logging configuration.
+- Sysmon adds valuable context but requires tuning to avoid noise.
+- Analyst reports and stakeholder summaries serve different audiences.
+- False-positive reduction is an important part of detection engineering.
+- ATT&CK mapping helps detections become easier to explain and defend.
+- Shorter review windows often produce cleaner incident narratives.
+
+## Known Limitations
+
+- Designed for Windows-native execution.
+- Best results usually come from 1–3 day review windows.
+- Longer time windows may skew results when event caps are reached.
+- Sysmon is optional but strongly recommended.
+- This is a home-lab project, not a replacement for enterprise SIEM, EDR, or case management tooling.
+
+## Future Improvements
+
+- Add more screenshots of generated reports.
+- Add a demo GIF showing reporter execution and report review.
+- Add sample JSON output examples.
+- Add more detection examples mapped to ATT&CK.
+- Add a detection coverage matrix.
+- Add Sigma-rule style mappings.
+- Add unit tests for parsing and detection functions.
+- Expand documentation for Windows logging setup.
+- Add release packages for easier download.
+- Add report comparison examples across different test runs.
+
+## Disclaimer
+
+This project is for educational, portfolio, and controlled home-lab use only. Run validation commands only on systems you own or are authorized to test. This project is not a replacement for enterprise incident response tooling, SIEM platforms, EDR products, or professional forensic procedures.
