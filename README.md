@@ -145,6 +145,14 @@ PowerShell was executed with command-line arguments indicating potential script 
 - Validate user context
 - Correlate with network activity
 
+## Desktop app and Windows executable
+
+A desktop launcher and Windows x64 build workflow are available. The desktop app provides collection settings, optional browser history, a responsive progress indicator, and a separate report folder for every run. Recipients of the built ZIP do not need Python or Git.
+
+See [desktop download, build, and sharing instructions](docs/DESKTOP_APP.md). Build artifacts are available after a successful **Build Windows desktop app** workflow run; a public release must be published separately after Windows validation.
+
+Run the launcher from source with `python .\scripts\windows_ir_app.py`.
+
 ## Quick Start
 
 ### 1. Clone the Repository
