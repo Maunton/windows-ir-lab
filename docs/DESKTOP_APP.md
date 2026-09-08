@@ -74,6 +74,13 @@ Get-WinEvent -FilterHashtable @{
 } -MaxEvents 20 | Select-Object TimeCreated, Id, Message
 ```
 
-Then run the reporter for one day. If events exist in Event Viewer but not in the report, try a higher event limit: all Sysmon event types share that limit, so busy recent process activity can crowd out earlier DNS/network evidence. If the command reports access denied, use elevation. If the log is absent, check Sysmon installation/service status. DNS query results do not always contain an IP (for example, failed queries); network connection events are a separate evidence source.
+Then run the reporter for one day. If events exist in Event Viewer but not in the report, try a higher event limit: in older builds all Sysmon event types share that limit. Version 0.2.1-preview queries network, DNS and other events separately. If the command reports access denied, use elevation. If the log is absent, check Sysmon installation/service status. DNS query results do not always contain an IP (for example, failed queries); network connection events are a separate evidence source.
 
 See Microsoft's [Sysmon filtering documentation](https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon) for event and filter semantics.
+
+
+## 0.2.1 preview: independent network collection
+
+Sysmon DNS (22), network connections (3), and other event types now have separate query budgets. With a limit of 5,000, up to 15,000 Sysmon events can be collected. Gaps / Notes lists the count, oldest/newest collected timestamps and cap status for each group. This prevents process-access and registry noise from consuming the DNS/network budget; any group can still reach its own cap. A three-day request does not guarantee three days of retained or collected evidence.
+
+The app title identifies this build as 0.2.1-preview. Non-administrator launches now ask whether to continue with limited access. Failed log queries show an incomplete-collection banner in HTML reports. Neither change automatically elevates the app or changes Sysmon settings.

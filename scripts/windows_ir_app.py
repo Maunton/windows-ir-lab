@@ -39,7 +39,7 @@ class App:
         self.running = False
         self.output = None
         self.events = queue.Queue()
-        root.title("Windows IR Lab | Sec Ops Syndicate")
+        root.title("Windows IR Lab 0.2.1-preview | Sec Ops Syndicate")
         root.geometry("720x560")
         root.minsize(640, 520)
         frame = ttk.Frame(root, padding=24)
@@ -50,7 +50,7 @@ class App:
         self.limit = tk.StringVar(value="400")
         self.folder = tk.StringVar(value=str(Path.home() / "Windows-IR-Lab-Reports"))
         self.browser = tk.BooleanVar(value=False)
-        for label, var in (("Days to review (1–365)", self.days), ("Maximum events per log (1–100000)", self.limit)):
+        for label, var in (("Days to review (1–365)", self.days), ("Maximum events per query (Sysmon: three separate groups)", self.limit)):
             ttk.Label(frame, text=label).pack(anchor="w")
             ttk.Entry(frame, textvariable=var).pack(fill="x", pady=(3, 8))
         ttk.Label(frame, text="Save reports in").pack(anchor="w")
@@ -80,6 +80,12 @@ class App:
 
     def start(self):
         if self.running:
+            return
+        if not reporter.is_admin() and not messagebox.askyesno(
+            "Administrator access recommended",
+            "This app is not running as administrator. Security and Sysmon collection may fail.\n\n"
+            "Choose No, close the app, then right-click the EXE and select Run as administrator.\n\n"
+            "Continue with limited access?", parent=self.root):
             return
         try:
             days, limit = validate_options(self.days.get(), self.limit.get())

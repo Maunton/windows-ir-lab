@@ -53,3 +53,34 @@ class NetworkTests(unittest.TestCase):
         with patch.object(reporter, 'run_powershell', return_value='{"exists":true,"events":{"Id":22}}'):
             result = reporter.collect_event_log('Sysmon', [22], 1, 1)
         self.assertTrue(result['limit_reached'])
+
+    def test_busy_sysmon_does_not_crowd_out_dns_and_network(self):
+        from unittest.mock import patch
+        def collect(log, ids, days, limit):
+            return {'exists': True, 'limit_reached': True, 'events': [
+                {'Id': ids[0], 'RecordId': ids[0], 'TimeCreated': '2026-09-08T04:37:20+00:00'}]}
+        with patch.object(reporter, 'collect_event_log', side_effect=collect) as query:
+            result = reporter.collect_sysmon_logs(3, 1)
+        self.assertEqual({e['Id'] for e in result['events']}, {1, 3, 22})
+        self.assertEqual(query.call_count, 3)
+        self.assertEqual([c['count'] for c in result['query_coverage']], [1, 1, 1])
+        self.assertTrue(result['limit_reached'])
+
+    def test_partial_sysmon_failure_keeps_other_groups(self):
+        from unittest.mock import patch
+        def collect(log, ids, days, limit):
+            if ids == [22]:
+                return {'exists': False, 'events': [], 'error': 'DNS query timed out'}
+            return {'exists': True, 'events': [{'Id': ids[0]}]}
+        with patch.object(reporter, 'collect_event_log', side_effect=collect):
+            result = reporter.collect_sysmon_logs(3, 50)
+        self.assertTrue(result['exists'])
+        self.assertEqual(len(result['events']), 2)
+        self.assertIn('DNS query timed out', result['error'])
+
+    def test_expanded_ipv6_destination_matches_compressed_dns_result(self):
+        score = reporter._v16_3_network_match_score(
+            image_name='', target_host='', target_ip='2603:1036:308:2834:0:0:0:2',
+            query_name='', query_results='', event_time='', anchor_time='',
+            focus_domain='', focus_images=[], ip_candidates=['2603:1036:308:2834::2'])
+        self.assertEqual(score, 5)

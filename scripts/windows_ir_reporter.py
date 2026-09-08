@@ -280,6 +280,42 @@ $events = $queryEvents |
         return {"log": log_name, "exists": False, "events": [], "error": str(exc)}
 
 
+def collect_sysmon_logs(days: int, max_events: int) -> Dict[str, Any]:
+    """Reserve independent budgets for connections, DNS and other Sysmon events."""
+    log_name = "Microsoft-Windows-Sysmon/Operational"
+    groups = [
+        ("Network connections (event 3)", [3]),
+        ("DNS queries (event 22)", [22]),
+        ("Other Sysmon events", [i for i in SYSMON_IDS if i not in {3, 22}]),
+    ]
+    events = []
+    coverage = []
+    errors = []
+    available = False
+    for label, ids in groups:
+        result = collect_event_log(log_name, ids, days, max_events)
+        batch = flatten_event(result)
+        events.extend(batch)
+        available = available or bool(result.get("exists"))
+        times = [parse_iso(e.get("TimeCreated")) for e in batch]
+        times = [t for t in times if t is not None and t.tzinfo is not None]
+        item = {"group": label, "event_ids": ids, "count": len(batch),
+                "limit": max_events, "limit_reached": bool(result.get("limit_reached")),
+                "oldest": min(times).isoformat() if times else None,
+                "newest": max(times).isoformat() if times else None,
+                "error": result.get("error")}
+        coverage.append(item)
+        if result.get("error"):
+            errors.append(f"{label}: {result['error']}")
+    def event_time(event):
+        parsed = parse_iso(event.get("TimeCreated"))
+        return parsed.timestamp() if parsed is not None and parsed.tzinfo else float("-inf")
+    events.sort(key=event_time, reverse=True)
+    return {"log": log_name, "exists": available, "events": events,
+            "query_coverage": coverage, "error": "; ".join(errors) if errors else None,
+            "limit_reached": any(c["limit_reached"] for c in coverage)}
+
+
 def collect_basic_system_info() -> Dict[str, Any]:
     script = r"""
 $cs = Get-CimInstance Win32_ComputerSystem
@@ -1289,7 +1325,7 @@ def analyze(data: Dict[str, Any]) -> Dict[str, Any]:
     ][:25]
 
     if not data.get("logs", {}).get("Sysmon", {}).get("exists"):
-        findings["notes"].append("Sysmon log not found. Install and configure Sysmon for better process, DNS, network, file, registry, and WMI visibility.")
+        findings["notes"].append("Sysmon telemetry is unavailable. Check the collection error details and administrator access before changing the installation or configuration.")
     if len(process_4688) == 0:
         findings["notes"].append("No Security 4688 process creation events were collected. Enable Audit Process Creation and include command line auditing.")
     if len([e for e in ps_events if int(e.get("Id", 0)) == 4104]) == 0:
@@ -4574,7 +4610,7 @@ def write_outputs(outdir: Path, analyst_report_md: str, analyst_report_html: str
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Collect and analyze Windows incident-response evidence.")
     parser.add_argument("--days", type=int, default=3, help="How many days back to query (default: 3)")
-    parser.add_argument("--max-events", type=int, default=400, help="Max events per log query (default: 400)")
+    parser.add_argument("--max-events", type=int, default=400, help="Max events per query; Sysmon uses separate DNS, network and other budgets (default: 400)")
     parser.add_argument("--outdir", default="ir_report_output", help="Output directory (default: ir_report_output)")
     parser.add_argument("--skip-browser-history", action="store_true", help="Do not collect browser history")
     args = parser.parse_args(argv)
@@ -4598,7 +4634,7 @@ def main(argv=None) -> int:
         "Defender": collect_event_log("Microsoft-Windows-Windows Defender/Operational", DEFENDER_IDS, args.days, args.max_events),
         "PowerShell": collect_event_log("Microsoft-Windows-PowerShell/Operational", POWERSHELL_IDS, args.days, args.max_events),
         "PowerShellCore": collect_event_log("PowerShellCore/Operational", POWERSHELL_IDS, args.days, args.max_events),
-        "Sysmon": collect_event_log("Microsoft-Windows-Sysmon/Operational", SYSMON_IDS, args.days, args.max_events),
+        "Sysmon": collect_sysmon_logs(args.days, args.max_events),
     }
     raw_data["meta"]["browser_history_collected"] = not args.skip_browser_history
     raw_data["browser_history"] = {} if args.skip_browser_history else collect_browser_history(args.days, max_rows=max(50, args.max_events))
@@ -4610,8 +4646,12 @@ def main(argv=None) -> int:
     for name, log in raw_data["logs"].items():
         if log.get("error"):
             notes.append(f"{name} collection failed: {log['error']}. Coverage is incomplete.")
-        if log.get("limit_reached"):
+        if log.get("limit_reached") and not log.get("query_coverage"):
             notes.append(f"{name} reached the {args.max_events}-event cap; older evidence may be omitted. Increase --max-events or shorten --days.")
+    for group in raw_data["logs"]["Sysmon"].get("query_coverage", []):
+        span = f"{group['oldest']} to {group['newest']}" if group["oldest"] else "no timestamped events"
+        notes.append(f"Sysmon {group['group']}: {group['count']} events; collected range: {span}."
+                     + (f" Reached this group's {group['limit']}-event cap; older evidence may be omitted." if group["limit_reached"] else ""))
     if args.skip_browser_history:
         notes.append("Browser history was excluded by request; browser findings are unavailable.")
     sysmon_events = flatten_event(raw_data["logs"].get("Sysmon", {}))
@@ -4620,11 +4660,21 @@ def main(argv=None) -> int:
             notes.append(f"No Sysmon event {event_id} ({label}) was collected. Check Sysmon filters, time window and event cap; this is not proof that no activity occurred.")
     analysis_results["detections"] = build_named_detections(raw_data, analysis_results)
     analysis_results["case"] = build_case_workflow(raw_data, analysis_results, Path(args.outdir))
+    collection_failed = any(log.get("error") for log in raw_data["logs"].values())
+    if collection_failed:
+        analysis_results["case"]["status"] = "Incomplete collection — review collection errors"
+        analysis_results["case"]["summary"] = "One or more log queries failed. Findings cover only the evidence successfully collected."
 
     analyst_report_md = generate_markdown(raw_data, analysis_results, args.days)
     analyst_report_html = generate_analyst_html(raw_data, analysis_results, args.days)
     stakeholder_summary_md = generate_stakeholder_summary(raw_data, analysis_results, args.days)
     stakeholder_summary_html = generate_stakeholder_html(raw_data, analysis_results, args.days)
+    if collection_failed:
+        warning = "<div style='padding:16px;background:#fff3cd;color:#332701'><strong>Incomplete collection:</strong> One or more log queries failed. A low risk label is not an assessment of the missing evidence. Review Gaps / Notes in the analyst report.</div>"
+        analyst_report_html = analyst_report_html.replace("<body>", "<body>" + warning, 1)
+        stakeholder_summary_html = stakeholder_summary_html.replace("<body>", "<body>" + warning, 1)
+        analyst_report_md = "> **Incomplete collection:** One or more log queries failed. Review Gaps / Notes.\n\n" + analyst_report_md
+        stakeholder_summary_md = "> **Incomplete collection:** One or more log queries failed. Review the analyst report.\n\n" + stakeholder_summary_md
     analyst_path, analyst_html_path, stakeholder_path, stakeholder_html_path, json_path, case_root = write_outputs(
         Path(args.outdir),
         analyst_report_md,
@@ -5306,7 +5356,16 @@ def _v16_3_network_match_score(
     query_results_l = safe_lower(query_results)
     image_name_l = safe_lower(image_name)
     time_delta = _seconds_between(parse_iso(event_time), parse_iso(anchor_time))
-    ip_set = {safe_lower(ip) for ip in ip_candidates if ip}
+    def canonical_ip(value):
+        try:
+            parsed = ipaddress.ip_address(value)
+            if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
+                parsed = parsed.ipv4_mapped
+            return str(parsed)
+        except ValueError:
+            return safe_lower(value)
+    ip_set = {canonical_ip(ip) for ip in ip_candidates if ip}
+    target_ip_l = canonical_ip(target_ip_l)
 
     if focus_domain:
         if focus_domain in target_host_l or focus_domain in query_name_l or focus_domain in query_results_l:
