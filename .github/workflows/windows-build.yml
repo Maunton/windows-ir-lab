@@ -30,9 +30,19 @@ jobs:
           $app = Start-Process .\dist\Windows-IR-Lab\Windows-IR-Lab.exe -PassThru
           if ($app.WaitForExit(10000)) { throw "Desktop app exited unexpectedly: $($app.ExitCode)" }
           Stop-Process -Id $app.Id
+      - name: Exercise packaged collection on the Windows runner
+        timeout-minutes: 10
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'ir-smoke-reports'
+          & .\dist\Windows-IR-CLI\Windows-IR-CLI.exe --days 1 --max-events 10 --skip-browser-history --outdir $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($name in @('windows_ir_analyst_report.html', 'windows_ir_stakeholder_summary.html', 'windows_ir_report.json')) {
+            if (-not (Test-Path (Join-Path $out $name))) { throw "Missing output: $name" }
+          }
       - name: Package download and checksum
         run: |
           Copy-Item LICENSE dist\
+          Copy-Item config dist\config -Recurse
           Copy-Item docs\DESKTOP_APP.md dist\READ-ME-FIRST.md
           Compress-Archive -Path dist\* -DestinationPath Windows-IR-Lab-Windows-x64.zip
           $hash = (Get-FileHash Windows-IR-Lab-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
