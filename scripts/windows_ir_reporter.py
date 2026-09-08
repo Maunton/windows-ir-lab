@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import urllib.parse
 import html
+import ipaddress
 import winreg
 
 UTC = dt.timezone.utc
@@ -201,11 +202,14 @@ def run_powershell(script: str) -> str:
     if not exe:
         raise RuntimeError("PowerShell was not found in PATH.")
     proc = subprocess.run(
-        [exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+        [exe, "-NoProfile", "-NonInteractive", "-Command",
+         "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); " + script],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=180,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "PowerShell command failed")
@@ -231,12 +235,16 @@ def collect_event_log(log_name: str, event_ids: List[int], days: int, max_events
 $ErrorActionPreference = 'Stop'
 $logName = '{ps_escape(log_name)}'
 $start = (Get-Date).AddDays(-{days})
-if (-not (Get-WinEvent -ListLog $logName -ErrorAction SilentlyContinue)) {{
+if (-not (Get-WinEvent -ListLog $logName -ErrorAction Stop)) {{
   [PSCustomObject]@{{ log=$logName; exists=$false; events=@() }} | ConvertTo-Json -Depth 8 -Compress
   exit 0
 }}
-$events = Get-WinEvent -FilterHashtable @{{LogName=$logName; Id=@({ids}); StartTime=$start}} -ErrorAction SilentlyContinue |
-  Select-Object -First {max_events} |
+$queryEvents = try {{
+  Get-WinEvent -FilterHashtable @{{LogName=$logName; Id=@({ids}); StartTime=$start}} -MaxEvents {max_events} -ErrorAction Stop
+}} catch {{
+  if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') {{ @() }} else {{ throw }}
+}}
+$events = $queryEvents |
   ForEach-Object {{
     $xml = [xml]$_.ToXml()
     $data = [ordered]@{{}}
@@ -262,8 +270,50 @@ $events = Get-WinEvent -FilterHashtable @{{LogName=$logName; Id=@({ids}); StartT
   }}
 [PSCustomObject]@{{ log=$logName; exists=$true; events=$events }} | ConvertTo-Json -Depth 8 -Compress
 """
-    raw = run_powershell(script).strip()
-    return to_jsonish(raw)
+    try:
+        result = to_jsonish(run_powershell(script).strip())
+        if not isinstance(result, dict) or "events" not in result:
+            raise ValueError("PowerShell returned invalid event-log data")
+        result["limit_reached"] = len(normalize_list(result.get("events"))) >= max_events
+        return result
+    except (RuntimeError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        return {"log": log_name, "exists": False, "events": [], "error": str(exc)}
+
+
+def collect_sysmon_logs(days: int, max_events: int) -> Dict[str, Any]:
+    """Reserve independent budgets for connections, DNS and other Sysmon events."""
+    log_name = "Microsoft-Windows-Sysmon/Operational"
+    groups = [
+        ("Network connections (event 3)", [3]),
+        ("DNS queries (event 22)", [22]),
+        ("Other Sysmon events", [i for i in SYSMON_IDS if i not in {3, 22}]),
+    ]
+    events = []
+    coverage = []
+    errors = []
+    available = False
+    for label, ids in groups:
+        result = collect_event_log(log_name, ids, days, max_events)
+        batch = flatten_event(result)
+        events.extend(batch)
+        available = available or bool(result.get("exists"))
+        times = [parse_iso(e.get("TimeCreated")) for e in batch]
+        times = [t for t in times if t is not None and t.tzinfo is not None]
+        item = {"group": label, "event_ids": ids, "count": len(batch),
+                "limit": max_events, "limit_reached": bool(result.get("limit_reached")),
+                "oldest": min(times).isoformat() if times else None,
+                "newest": max(times).isoformat() if times else None,
+                "error": result.get("error")}
+        coverage.append(item)
+        if result.get("error"):
+            errors.append(f"{label}: {result['error']}")
+    def event_time(event):
+        parsed = parse_iso(event.get("TimeCreated"))
+        return parsed.timestamp() if parsed is not None and parsed.tzinfo else float("-inf")
+    events.sort(key=event_time, reverse=True)
+    return {"log": log_name, "exists": available, "events": events,
+            "query_coverage": coverage, "error": "; ".join(errors) if errors else None,
+            "limit_reached": any(c["limit_reached"] for c in coverage)}
 
 
 def collect_basic_system_info() -> Dict[str, Any]:
@@ -1275,7 +1325,7 @@ def analyze(data: Dict[str, Any]) -> Dict[str, Any]:
     ][:25]
 
     if not data.get("logs", {}).get("Sysmon", {}).get("exists"):
-        findings["notes"].append("Sysmon log not found. Install and configure Sysmon for better process, DNS, network, file, registry, and WMI visibility.")
+        findings["notes"].append("Sysmon telemetry is unavailable. Check the collection error details and administrator access before changing the installation or configuration.")
     if len(process_4688) == 0:
         findings["notes"].append("No Security 4688 process creation events were collected. Enable Audit Process Creation and include command line auditing.")
     if len([e for e in ps_events if int(e.get("Id", 0)) == 4104]) == 0:
@@ -1609,6 +1659,8 @@ def _collect_direct_command_events(data: Dict[str, Any]) -> List[Dict[str, Any]]
 def _seconds_between(a: Optional[dt.datetime], b: Optional[dt.datetime]) -> float:
     if not a or not b:
         return float("inf")
+    if (a.tzinfo is None) != (b.tzinfo is None):
+        return float("inf")  # Never guess the timezone of incomplete evidence.
     return abs((a - b).total_seconds())
 
 
@@ -3106,57 +3158,6 @@ def _v12_top_findings(data: Dict[str, Any], analysis_results: Dict[str, Any]) ->
             break
     return findings
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Collect and analyze Windows incident-response evidence.")
-    parser.add_argument("--days", type=int, default=3, help="How many days back to query (default: 3)")
-    parser.add_argument("--max-events", type=int, default=400, help="Max events per log query (default: 400)")
-    parser.add_argument("--outdir", default="ir_report_output", help="Output directory (default: ir_report_output)")
-    args = parser.parse_args()
-
-    if os.name != "nt":
-        print("This script is intended to run on Windows.", file=sys.stderr)
-        return 2
-    if not powershell_available():
-        print("PowerShell was not found. This script requires Windows PowerShell or PowerShell 7.", file=sys.stderr)
-        return 2
-
-    raw_data: Dict[str, Any] = {
-        "meta": {
-            "days": args.days,
-            "max_events": args.max_events,
-            "is_admin": is_admin(),
-            "generated_at": dt.datetime.now().isoformat(),
-        }
-    }
-
-    raw_data["system_info"] = collect_basic_system_info()
-    raw_data["logs"] = {
-        "Security": collect_event_log("Security", SECURITY_IDS, args.days, args.max_events),
-        "System": collect_event_log("System", SYSTEM_IDS, args.days, args.max_events),
-        "Defender": collect_event_log("Microsoft-Windows-Windows Defender/Operational", DEFENDER_IDS, args.days, args.max_events),
-        "PowerShell": collect_event_log("Microsoft-Windows-PowerShell/Operational", POWERSHELL_IDS, args.days, args.max_events),
-        "PowerShellCore": collect_event_log("PowerShellCore/Operational", POWERSHELL_IDS, args.days, args.max_events),
-        "Sysmon": collect_event_log("Microsoft-Windows-Sysmon/Operational", SYSMON_IDS, args.days, args.max_events),
-    }
-    raw_data["browser_history"] = collect_browser_history(args.days, max_rows=max(50, args.max_events))
-    raw_data["run_keys"] = collect_run_keys()
-    raw_data["startup_items"] = collect_startup_items()
-
-    analysis_results = analyze(raw_data)
-    analyst_report_md = generate_markdown(raw_data, analysis_results, args.days)
-    analyst_report_html = generate_analyst_html(raw_data, analysis_results, args.days)
-    stakeholder_summary_md = generate_stakeholder_summary(raw_data, analysis_results, args.days)
-    analyst_path, analyst_html_path, stakeholder_path, json_path = write_outputs(Path(args.outdir), analyst_report_md, analyst_report_html, stakeholder_summary_md, raw_data, analysis_results)
-
-    print(f"Analyst report (Markdown) written to: {analyst_path}")
-    print(f"Analyst report (HTML) written to:     {analyst_html_path}")
-    print(f"Stakeholder summary written to:       {stakeholder_path}")
-    print(f"JSON written to:                      {json_path}")
-    if not raw_data["meta"]["is_admin"]:
-        print("Tip: Run from an elevated prompt for best access to Security and other protected logs.")
-    else:
-        print("Admin check: elevated prompt confirmed.")
-    return 0
 
 # === v12 HTML polish overrides ===
 
@@ -3677,51 +3678,6 @@ def write_outputs(outdir: Path, analyst_report_md: str, analyst_report_html: str
     return analyst_path, analyst_html_path, stakeholder_path, stakeholder_html_path, json_path
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Collect and analyze Windows incident-response evidence.")
-    parser.add_argument("--days", type=int, default=3, help="How many days back to query (default: 3)")
-    parser.add_argument("--max-events", type=int, default=400, help="Max events per log query (default: 400)")
-    parser.add_argument("--outdir", default="ir_report_output", help="Output directory (default: ir_report_output)")
-    args = parser.parse_args()
-
-    if os.name != "nt":
-        print("This script is intended to run on Windows.", file=sys.stderr)
-        return 2
-    if not powershell_available():
-        print("PowerShell was not found. This script requires Windows PowerShell or PowerShell 7.", file=sys.stderr)
-        return 2
-
-    raw_data: Dict[str, Any] = {"meta": {"days": args.days, "max_events": args.max_events, "is_admin": is_admin(), "generated_at": dt.datetime.now().isoformat()}}
-    raw_data["system_info"] = collect_basic_system_info()
-    raw_data["logs"] = {
-        "Security": collect_event_log("Security", SECURITY_IDS, args.days, args.max_events),
-        "System": collect_event_log("System", SYSTEM_IDS, args.days, args.max_events),
-        "Defender": collect_event_log("Microsoft-Windows-Windows Defender/Operational", DEFENDER_IDS, args.days, args.max_events),
-        "PowerShell": collect_event_log("Microsoft-Windows-PowerShell/Operational", POWERSHELL_IDS, args.days, args.max_events),
-        "PowerShellCore": collect_event_log("PowerShellCore/Operational", POWERSHELL_IDS, args.days, args.max_events),
-        "Sysmon": collect_event_log("Microsoft-Windows-Sysmon/Operational", SYSMON_IDS, args.days, args.max_events),
-    }
-    raw_data["browser_history"] = collect_browser_history(args.days, max_rows=max(50, args.max_events))
-    raw_data["run_keys"] = collect_run_keys()
-    raw_data["startup_items"] = collect_startup_items()
-
-    analysis_results = analyze(raw_data)
-    analyst_report_md = generate_markdown(raw_data, analysis_results, args.days)
-    analyst_report_html = generate_analyst_html(raw_data, analysis_results, args.days)
-    stakeholder_summary_md = generate_stakeholder_summary(raw_data, analysis_results, args.days)
-    stakeholder_summary_html = generate_stakeholder_html(raw_data, analysis_results, args.days)
-    analyst_path, analyst_html_path, stakeholder_path, stakeholder_html_path, json_path = write_outputs(Path(args.outdir), analyst_report_md, analyst_report_html, stakeholder_summary_md, stakeholder_summary_html, raw_data, analysis_results)
-
-    print(f"Analyst report (Markdown) written to: {analyst_path}")
-    print(f"Analyst report (HTML) written to:     {analyst_html_path}")
-    print(f"Stakeholder summary (Markdown) written to: {stakeholder_path}")
-    print(f"Stakeholder summary (HTML) written to:     {stakeholder_html_path}")
-    print(f"JSON written to:                      {json_path}")
-    if not raw_data["meta"]["is_admin"]:
-        print("Tip: Run from an elevated prompt for best access to Security and other protected logs.")
-    else:
-        print("Admin check: elevated prompt confirmed.")
-    return 0
 
 
 
@@ -4194,53 +4150,6 @@ def generate_analyst_html(data: Dict[str, Any], analysis_results: Dict[str, Any]
     return base
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Collect and analyze Windows incident-response evidence.")
-    parser.add_argument("--days", type=int, default=3, help="How many days back to query (default: 3)")
-    parser.add_argument("--max-events", type=int, default=400, help="Max events per log query (default: 400)")
-    parser.add_argument("--outdir", default="ir_report_output", help="Output directory (default: ir_report_output)")
-    args = parser.parse_args()
-
-    if os.name != "nt":
-        print("This script is intended to run on Windows.", file=sys.stderr)
-        return 2
-    if not powershell_available():
-        print("PowerShell was not found. This script requires Windows PowerShell or PowerShell 7.", file=sys.stderr)
-        return 2
-
-    raw_data: Dict[str, Any] = {"meta": {"days": args.days, "max_events": args.max_events, "is_admin": is_admin(), "generated_at": dt.datetime.now().isoformat()}}
-    raw_data["system_info"] = collect_basic_system_info()
-    raw_data["logs"] = {
-        "Security": collect_event_log("Security", SECURITY_IDS, args.days, args.max_events),
-        "System": collect_event_log("System", SYSTEM_IDS, args.days, args.max_events),
-        "Defender": collect_event_log("Microsoft-Windows-Windows Defender/Operational", DEFENDER_IDS, args.days, args.max_events),
-        "PowerShell": collect_event_log("Microsoft-Windows-PowerShell/Operational", POWERSHELL_IDS, args.days, args.max_events),
-        "PowerShellCore": collect_event_log("PowerShellCore/Operational", POWERSHELL_IDS, args.days, args.max_events),
-        "Sysmon": collect_event_log("Microsoft-Windows-Sysmon/Operational", SYSMON_IDS, args.days, args.max_events),
-    }
-    raw_data["browser_history"] = collect_browser_history(args.days, max_rows=max(50, args.max_events))
-    raw_data["run_keys"] = collect_run_keys()
-    raw_data["startup_items"] = collect_startup_items()
-
-    analysis_results = analyze(raw_data)
-    analysis_results["detections"] = build_named_detections(raw_data, analysis_results)
-
-    analyst_report_md = generate_markdown(raw_data, analysis_results, args.days)
-    analyst_report_html = generate_analyst_html(raw_data, analysis_results, args.days)
-    stakeholder_summary_md = generate_stakeholder_summary(raw_data, analysis_results, args.days)
-    stakeholder_summary_html = generate_stakeholder_html(raw_data, analysis_results, args.days)
-    analyst_path, analyst_html_path, stakeholder_path, stakeholder_html_path, json_path = write_outputs(Path(args.outdir), analyst_report_md, analyst_report_html, stakeholder_summary_md, stakeholder_summary_html, raw_data, analysis_results)
-
-    print(f"Analyst report (Markdown) written to: {analyst_path}")
-    print(f"Analyst report (HTML) written to:     {analyst_html_path}")
-    print(f"Stakeholder summary (Markdown) written to: {stakeholder_path}")
-    print(f"Stakeholder summary (HTML) written to:     {stakeholder_html_path}")
-    print(f"JSON written to:                      {json_path}")
-    if not raw_data["meta"]["is_admin"]:
-        print("Tip: Run from an elevated prompt for best access to Security and other protected logs.")
-    else:
-        print("Admin check: elevated prompt confirmed.")
-    return 0
 
 
 # ===== v15 case workflow + triage playbooks =====
@@ -4698,12 +4607,17 @@ def write_outputs(outdir: Path, analyst_report_md: str, analyst_report_html: str
     return analyst_path, analyst_html_path, stakeholder_path, stakeholder_html_path, json_path, case_root
 
 
-def main() -> int:
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Collect and analyze Windows incident-response evidence.")
     parser.add_argument("--days", type=int, default=3, help="How many days back to query (default: 3)")
-    parser.add_argument("--max-events", type=int, default=400, help="Max events per log query (default: 400)")
+    parser.add_argument("--max-events", type=int, default=400, help="Max events per query; Sysmon uses separate DNS, network and other budgets (default: 400)")
     parser.add_argument("--outdir", default="ir_report_output", help="Output directory (default: ir_report_output)")
-    args = parser.parse_args()
+    parser.add_argument("--skip-browser-history", action="store_true", help="Do not collect browser history")
+    args = parser.parse_args(argv)
+    if not 1 <= args.days <= 365:
+        parser.error("--days must be between 1 and 365")
+    if not 1 <= args.max_events <= 100000:
+        parser.error("--max-events must be between 1 and 100000")
 
     if os.name != "nt":
         print("This script is intended to run on Windows.", file=sys.stderr)
@@ -4720,20 +4634,47 @@ def main() -> int:
         "Defender": collect_event_log("Microsoft-Windows-Windows Defender/Operational", DEFENDER_IDS, args.days, args.max_events),
         "PowerShell": collect_event_log("Microsoft-Windows-PowerShell/Operational", POWERSHELL_IDS, args.days, args.max_events),
         "PowerShellCore": collect_event_log("PowerShellCore/Operational", POWERSHELL_IDS, args.days, args.max_events),
-        "Sysmon": collect_event_log("Microsoft-Windows-Sysmon/Operational", SYSMON_IDS, args.days, args.max_events),
+        "Sysmon": collect_sysmon_logs(args.days, args.max_events),
     }
-    raw_data["browser_history"] = collect_browser_history(args.days, max_rows=max(50, args.max_events))
+    raw_data["meta"]["browser_history_collected"] = not args.skip_browser_history
+    raw_data["browser_history"] = {} if args.skip_browser_history else collect_browser_history(args.days, max_rows=max(50, args.max_events))
     raw_data["run_keys"] = collect_run_keys()
     raw_data["startup_items"] = collect_startup_items()
 
     analysis_results = analyze(raw_data)
+    notes = analysis_results.setdefault("notes", [])
+    for name, log in raw_data["logs"].items():
+        if log.get("error"):
+            notes.append(f"{name} collection failed: {log['error']}. Coverage is incomplete.")
+        if log.get("limit_reached") and not log.get("query_coverage"):
+            notes.append(f"{name} reached the {args.max_events}-event cap; older evidence may be omitted. Increase --max-events or shorten --days.")
+    for group in raw_data["logs"]["Sysmon"].get("query_coverage", []):
+        span = f"{group['oldest']} to {group['newest']}" if group["oldest"] else "no timestamped events"
+        notes.append(f"Sysmon {group['group']}: {group['count']} events; collected range: {span}."
+                     + (f" Reached this group's {group['limit']}-event cap; older evidence may be omitted." if group["limit_reached"] else ""))
+    if args.skip_browser_history:
+        notes.append("Browser history was excluded by request; browser findings are unavailable.")
+    sysmon_events = flatten_event(raw_data["logs"].get("Sysmon", {}))
+    for event_id, label in [(3, "network connections"), (22, "DNS queries")]:
+        if not any(int(event.get("Id", 0)) == event_id for event in sysmon_events):
+            notes.append(f"No Sysmon event {event_id} ({label}) was collected. Check Sysmon filters, time window and event cap; this is not proof that no activity occurred.")
     analysis_results["detections"] = build_named_detections(raw_data, analysis_results)
     analysis_results["case"] = build_case_workflow(raw_data, analysis_results, Path(args.outdir))
+    collection_failed = any(log.get("error") for log in raw_data["logs"].values())
+    if collection_failed:
+        analysis_results["case"]["status"] = "Incomplete collection — review collection errors"
+        analysis_results["case"]["summary"] = "One or more log queries failed. Findings cover only the evidence successfully collected."
 
     analyst_report_md = generate_markdown(raw_data, analysis_results, args.days)
     analyst_report_html = generate_analyst_html(raw_data, analysis_results, args.days)
     stakeholder_summary_md = generate_stakeholder_summary(raw_data, analysis_results, args.days)
     stakeholder_summary_html = generate_stakeholder_html(raw_data, analysis_results, args.days)
+    if collection_failed:
+        warning = "<div style='padding:16px;background:#fff3cd;color:#332701'><strong>Incomplete collection:</strong> One or more log queries failed. A low risk label is not an assessment of the missing evidence. Review Gaps / Notes in the analyst report.</div>"
+        analyst_report_html = analyst_report_html.replace("<body>", "<body>" + warning, 1)
+        stakeholder_summary_html = stakeholder_summary_html.replace("<body>", "<body>" + warning, 1)
+        analyst_report_md = "> **Incomplete collection:** One or more log queries failed. Review Gaps / Notes.\n\n" + analyst_report_md
+        stakeholder_summary_md = "> **Incomplete collection:** One or more log queries failed. Review the analyst report.\n\n" + stakeholder_summary_md
     analyst_path, analyst_html_path, stakeholder_path, stakeholder_html_path, json_path, case_root = write_outputs(
         Path(args.outdir),
         analyst_report_md,
@@ -5313,7 +5254,20 @@ def _v16_1_infer_focus_anchor_from_items(items: List[Dict[str, Any]]) -> Optiona
 def _v16_2_extract_ipv4_candidates(text: str) -> List[str]:
     if not text:
         return []
-    return list(dict.fromkeys(re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text)))
+    # Sysmon QueryResults uses semicolon-delimited addresses and may include CNAMEs.
+    addresses = []
+    for token in re.split(r"[;\s,]+", text):
+        try:
+            address = ipaddress.ip_address(token.strip("[]"))
+        except ValueError:
+            continue
+        # Normalize mapped IPv4 so it can join an event-3 IPv4 destination.
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            address = address.ipv4_mapped
+        value = str(address)
+        if value not in addresses:
+            addresses.append(value)
+    return addresses
 
 
 def _v16_3_web_request_anchor(data: Dict[str, Any], analysis_results: Dict[str, Any]) -> Tuple[str, str, str]:
@@ -5377,7 +5331,7 @@ def _v16_2_focus_ip_candidates(data: Dict[str, Any], focus_domain: str, anchor_t
             image_name = Path(evt_data.get("Image") or "").name.lower()
             if focus_domain and focus_domain in dest_host and dest_ip:
                 ips.append(dest_ip)
-            elif image_name in {"powershell.exe", "pwsh.exe", "cmd.exe"} and abs(minute_bucket(event.get("TimeCreated")) - minute_bucket(anchor_time)) <= 1 and dest_ip:
+            elif image_name in {"powershell.exe", "pwsh.exe", "cmd.exe"} and _seconds_between(parse_iso(event.get("TimeCreated")), parse_iso(anchor_time)) <= 60 and dest_ip:
                 ips.append(dest_ip)
     return list(dict.fromkeys([ip for ip in ips if ip]))
 
@@ -5401,9 +5355,17 @@ def _v16_3_network_match_score(
     query_name_l = safe_lower(query_name)
     query_results_l = safe_lower(query_results)
     image_name_l = safe_lower(image_name)
-    event_min = minute_bucket(event_time)
-    anchor_min = minute_bucket(anchor_time)
-    ip_set = {safe_lower(ip) for ip in ip_candidates if ip}
+    time_delta = _seconds_between(parse_iso(event_time), parse_iso(anchor_time))
+    def canonical_ip(value):
+        try:
+            parsed = ipaddress.ip_address(value)
+            if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
+                parsed = parsed.ipv4_mapped
+            return str(parsed)
+        except ValueError:
+            return safe_lower(value)
+    ip_set = {canonical_ip(ip) for ip in ip_candidates if ip}
+    target_ip_l = canonical_ip(target_ip_l)
 
     if focus_domain:
         if focus_domain in target_host_l or focus_domain in query_name_l or focus_domain in query_results_l:
@@ -5412,9 +5374,9 @@ def _v16_3_network_match_score(
         score += 5
     if image_name_l in focus_images:
         score += 2
-    if abs(event_min - anchor_min) <= 1:
+    if time_delta <= 60:
         score += 2
-    if image_name_l in {"powershell.exe", "pwsh.exe", "cmd.exe"} and abs(event_min - anchor_min) <= 2:
+    if image_name_l in {"powershell.exe", "pwsh.exe", "cmd.exe"} and time_delta <= 120:
         score += 1
     return score
 

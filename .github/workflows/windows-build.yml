@@ -1,0 +1,56 @@
+name: Build Windows desktop app
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, codex/windows-desktop-app]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - run: python -m pip install -r requirements-build.txt
+      - run: python -m unittest discover -s tests -v
+      - name: Build desktop and command-line apps
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir --windowed --name Windows-IR-Lab scripts/windows_ir_app.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m PyInstaller --noconfirm --clean --onedir --console --name Windows-IR-CLI scripts/windows_ir_reporter.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Smoke test packaged CLI and GUI
+        run: |
+          & .\dist\Windows-IR-CLI\Windows-IR-CLI.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $app = Start-Process .\dist\Windows-IR-Lab\Windows-IR-Lab.exe -PassThru
+          if ($app.WaitForExit(10000)) { throw "Desktop app exited unexpectedly: $($app.ExitCode)" }
+          Stop-Process -Id $app.Id
+      - name: Exercise packaged collection on the Windows runner
+        timeout-minutes: 10
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'ir-smoke-reports'
+          & .\dist\Windows-IR-CLI\Windows-IR-CLI.exe --days 1 --max-events 10 --skip-browser-history --outdir $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($name in @('windows_ir_analyst_report.html', 'windows_ir_stakeholder_summary.html', 'windows_ir_report.json')) {
+            if (-not (Test-Path (Join-Path $out $name))) { throw "Missing output: $name" }
+          }
+      - name: Package download and checksum
+        run: |
+          Copy-Item LICENSE dist\
+          Copy-Item config dist\config -Recurse
+          Copy-Item docs\DESKTOP_APP.md dist\READ-ME-FIRST.md
+          Compress-Archive -Path dist\* -DestinationPath Windows-IR-Lab-Windows-x64.zip
+          $hash = (Get-FileHash Windows-IR-Lab-Windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  Windows-IR-Lab-Windows-x64.zip" | Set-Content SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-IR-Lab-Windows-x64
+          path: |
+            Windows-IR-Lab-Windows-x64.zip
+            SHA256SUMS.txt
+          retention-days: 30
